@@ -11,7 +11,8 @@ module JIT
 
     # Size of the JIT buffer
     JIT_BUF_SIZE = 1024 * 1024
-
+    REGISTERS = [:r8, :r9, :r10, :r11].freeze
+    
     # Initialize a JIT buffer. Called only once.
     def initialize
       # Allocate 64MiB of memory. This returns the memory address.
@@ -24,12 +25,21 @@ module JIT
     def compile(iseq)
       # Write machine code to this assembler.
       asm = Assembler.new
-
+      
       # Iterate over each YARV instruction.
       insn_index = 0
+      next_stack_pointer = 0 # in the current frame
       while insn_index < iseq.body.iseq_size
         insn = INSNS.fetch(C.rb_vm_insn_decode(iseq.body.iseq_encoded[insn_index]))
         case insn.name
+        in :putnil
+          asm.mov(REGISTERS[next_stack_pointer], C.to_value(nil))
+          next_stack_pointer += 1
+        in :leave
+          asm.add(:rsi, C.rb_control_frame_t.size) # control frame pointer
+          asm.mov([:rdi, C.rb_execution_context_t.offsetof(:cfp)], :rsi) # Update control frame pointer in the execution context.
+          asm.mov(:rax, REGISTERS[next_stack_pointer-1])
+          asm.ret()
         in :nop
           # none
         end
